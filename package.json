@@ -6,6 +6,7 @@
     "watch": "node esbuild --watch",
     "coverage:report": "npx nyc report --reporter=clover"
   },
+  "packageManager": "bun@1.3.13",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/frappe/frappe.git"

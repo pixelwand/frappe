@@ -235,7 +235,7 @@ def bundle(
 	make_asset_dirs(hard_link=hard_link)
 
 	mode = "production" if mode == "production" else "build"
-	command = f"yarn run {mode}"
+	command = f"bun run {mode}"
 
 	if apps:
 		command += f" --apps {apps}"
@@ -269,7 +269,7 @@ def watch(apps=None):
 	"""watch and rebuild if necessary"""
 	setup()
 
-	command = "yarn run watch"
+	command = "bun run watch"
 	if apps:
 		command += f" --apps {apps}"
 
@@ -288,8 +288,8 @@ def check_node_executable():
 	warn = "⚠️ "
 	if node_version.major < 18:
 		click.echo(f"{warn} Please update your node version to 18")
-	if not shutil.which("yarn"):
-		click.echo(f"{warn} Please install yarn using below command and try again.\nnpm install -g yarn")
+	if not shutil.which("bun"):
+		click.echo(f"{warn} Please install Bun using the command below and try again.\ncurl -fsSL https://bun.sh/install | bash")
 	click.echo()
 
 
