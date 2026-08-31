@@ -134,6 +134,7 @@ def sendmail(
 	email_headers=None,
 	raw_html=False,
 	add_css=True,
+	hide_header_footer=False,
 	redact_message_after_send=False,
 ) -> EmailQueue | None:
 	"""Send email using user's default **Email Account** or global default **Email Account**.
@@ -168,6 +169,7 @@ def sendmail(
 	    :param email_headers: Additional headers to be added in the email, e.g. {"X-Custom-Header": "value"} or {"Custom-Header": "value"}. Automatically prepends "X-" to the header name if not present.
 	    :param raw_html: Whether to treat email template as a complete HTML file
 	    :param add_css: Whether to add CSS from hooks/email_css to the email template
+	    :param hide_header_footer: Whether to omit the standard email header and footer
 	    :param redact_message_after_send: Replace the message body with a placeholder once sent, for emails carrying sensitive content.
 	"""
 
@@ -230,6 +232,7 @@ def sendmail(
 		email_headers=email_headers,
 		raw_html=raw_html,
 		add_css=add_css,
+		hide_header_footer=hide_header_footer,
 		redact_message_after_send=redact_message_after_send,
 	)
 
