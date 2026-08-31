@@ -604,6 +604,7 @@ class QueueBuilder:
 		email_headers=None,
 		raw_html=False,
 		add_css=True,
+		hide_header_footer=False,
 		redact_message_after_send=False,
 	):
 		"""Add email to sending queue (Email Queue)
@@ -638,6 +639,7 @@ class QueueBuilder:
 		:param email_headers: Additional headers to be added in the email, e.g. {"X-Custom-Header": "value"} or {"Custom-Header": "value"}. Automatically prepends "X-" to the header name if not present.
 		:param raw_html: Whether to treat email template as a complete HTML file
 		:param add_css: Add default CSS from hooks/email_css to the email template (default True)
+		:param hide_header_footer: Whether to omit the standard email header and footer
 		:param redact_message_after_send: Replace the message body with a placeholder once sent, for emails carrying sensitive content.
 		"""
 
@@ -678,6 +680,7 @@ class QueueBuilder:
 		self.email_headers = email_headers
 		self.raw_html = raw_html
 		self.add_css = add_css
+		self.hide_header_footer = hide_header_footer
 		self.redact_message_after_send = redact_message_after_send
 
 	@property
@@ -737,6 +740,7 @@ class QueueBuilder:
 			with_container=self.with_container,
 			raw_html=self.raw_html,
 			add_css=self.add_css,
+			hide_header_footer=self.hide_header_footer,
 		)
 
 	def should_include_unsubscribe_link(self):
