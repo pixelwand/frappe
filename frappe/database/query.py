@@ -322,14 +322,16 @@ class Engine:
 
 		if order_by:
 			if not (
-				self.is_postgres and is_select and (distinct or group_by)
+				self.is_postgres
+				and is_select
+				and (distinct or group_by or self._has_aggregate_select())
 			):  # ignore in Postgres since order by fields need to appear in select distinct
 				self.apply_order_by(order_by)
 			else:
 				warnings.warn(
 					(
 						"ORDER BY fields have been ignored because PostgreSQL requires them to "
-						"appear in the SELECT list when using DISTINCT or GROUP BY."
+						"appear in the SELECT list when using DISTINCT, GROUP BY or aggregates."
 					),
 					UserWarning,
 					stacklevel=2,
@@ -1198,6 +1200,24 @@ class Engine:
 	def apply_group_by(self, group_by: str | None = None):
 		parsed_group_by_fields = self._validate_group_by(group_by)
 		self.query = self.query.groupby(*parsed_group_by_fields)
+
+	def _has_aggregate_select(self) -> bool:
+		"""Return True if the SELECT list contains an aggregate (MAX/MIN/SUM/AVG/COUNT).
+
+		PostgreSQL rejects ORDER BY on a plain column when the select list is
+		aggregate-only (e.g. MAX(uid) plus the default ORDER BY creation),
+		while MariaDB tolerates it. Detect via pypika's is_aggregate so wrapped
+		expressions (e.g. SUM(x) + 1) are covered too.
+		"""
+		for field in getattr(self, "fields", []) or []:
+			try:
+				if getattr(field, "is_aggregate", False):
+					return True
+			except Exception:
+				continue
+			if isinstance(field, AggregateFunction):
+				return True
+		return False
 
 	def apply_order_by(self, order_by: str | None):
 		if not order_by or order_by == DefaultOrderBy:

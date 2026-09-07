@@ -766,6 +766,10 @@ class EmailAccount(Document):
 				# close connection to mailserver
 				email_server.logout()
 		except Exception:
+			# On PostgreSQL a failed statement aborts the transaction, so roll
+			# back before writing the Error Log — otherwise the log insert
+			# itself fails with InFailedSqlTransaction and masks the real error.
+			frappe.db.rollback()
 			self.log_error(title=_("Error while connecting to email account {0}").format(self.name))
 			return []
 
@@ -1048,17 +1052,24 @@ def pull_from_email_account(email_account):
 
 def get_max_email_uid(email_account):
 	"""get maximum uid of emails"""
+	from frappe.query_builder import functions
 
-	if result := frappe.get_all(
-		"Communication",
-		filters={
-			"communication_medium": "Email",
-			"sent_or_received": "Received",
-			"email_account": email_account,
-		},
-		fields=[{"MAX": "uid", "as": "uid"}],
-	):
-		return cint(result[0].get("uid", 0)) + 1
+	Communication = frappe.qb.DocType("Communication")
+	# Query Builder emits no ORDER BY here. The previous frappe.get_all with
+	# MAX(uid) inherited the default ORDER BY creation, which PostgreSQL
+	# rejects on aggregate-only selects (GroupingError).
+	row = (
+		frappe.qb.from_(Communication)
+		.select(functions.Max(Communication.uid).as_("uid"))
+		.where(
+			(Communication.communication_medium == "Email")
+			& (Communication.sent_or_received == "Received")
+			& (Communication.email_account == email_account)
+		)
+		.run(as_dict=True)
+	)
+	if row and row[0].get("uid") is not None:
+		return cint(row[0].get("uid", 0)) + 1
 	return 1
 
 
