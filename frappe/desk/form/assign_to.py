@@ -190,15 +190,40 @@ def _remove(doctype, name, assign_to, ignore_permissions=False):
 @frappe.whitelist()
 def remove_multiple(doctype: str, names: str):
 	docname_list = json.loads(names)
+	if not docname_list:
+		return
 
+	# Fail closed like the per-row path: one permission check per doc.
 	for name in docname_list:
-		assignments = get({"doctype": doctype, "name": name})
+		frappe.get_doc(doctype, name).check_permission()
 
-		if not assignments:
-			continue
+	# One query for every open assignment instead of one per doc (get() caps
+	# at 5 rows, so large assignee lists were never fully cleared).
+	todos = frappe.get_all(
+		"ToDo",
+		fields=["name", "reference_name", "allocated_to", "assigned_by"],
+		filters={
+			"reference_type": doctype,
+			"reference_name": ["in", docname_list],
+			"status": ("not in", ("Cancelled", "Closed")),
+		},
+	)
+	if not todos:
+		return
 
-		for assignment in assignments:
-			remove(doctype, name, assignment.get("owner"))
+	ToDo = frappe.qb.DocType("ToDo")
+	frappe.qb.update(ToDo).set(ToDo.status, "Cancelled").where(ToDo.name.isin([t.name for t in todos])).run()
+
+	if frappe.get_meta(doctype).get_field("assigned_to"):
+		Doc = frappe.qb.DocType(doctype)
+		frappe.qb.update(Doc).set(Doc.assigned_to, None).where(
+			Doc.name.isin(list({t.reference_name for t in todos}))
+		).run()
+
+	for todo in todos:
+		notify_assignment(
+			todo.assigned_by, todo.allocated_to, doctype, todo.reference_name
+		)
 
 
 @frappe.whitelist()
