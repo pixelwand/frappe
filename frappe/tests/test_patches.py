@@ -1,8 +1,9 @@
 from pathlib import Path
-from unittest.mock import mock_open, patch
+from unittest.mock import MagicMock, mock_open, patch
 
 import frappe
 from frappe.modules import patch_handler
+from frappe.patches.v16_0 import restore_user_settings_unique_constraint
 from frappe.tests import IntegrationTestCase
 
 EMTPY_FILE = ""
@@ -49,6 +50,29 @@ app.module.patch4
 
 
 class TestPatches(IntegrationTestCase):
+	@patch.object(restore_user_settings_unique_constraint.frappe, "db", new_callable=MagicMock)
+	def test_restore_user_settings_unique_constraint(self, db):
+		db.db_type = "postgres"
+		db.get_tables.return_value = ["__UserSettings"]
+		db.sql.return_value = []
+
+		restore_user_settings_unique_constraint.execute()
+
+		self.assertEqual(db.sql.call_count, 2)
+		db.sql_ddl.assert_called_once()
+		self.assertIn("unique", db.sql_ddl.call_args.args[0].lower())
+
+	@patch.object(restore_user_settings_unique_constraint.frappe, "db", new_callable=MagicMock)
+	def test_restore_user_settings_unique_constraint_is_idempotent(self, db):
+		db.db_type = "postgres"
+		db.get_tables.return_value = ["__UserSettings"]
+		db.sql.return_value = [(1,)]
+
+		restore_user_settings_unique_constraint.execute()
+
+		db.sql.assert_called_once()
+		db.sql_ddl.assert_not_called()
+
 	def test_patch_module_names(self):
 		frappe.flags.final_patches = []
 		frappe.flags.in_install = True
