@@ -16,9 +16,12 @@ class StaticDataMiddleware(SharedDataMiddleware):
 		self.environ = environ
 
 		def patch_start_response(status, headers, exc_info=None):
+			path = environ.get("PATH_INFO", "")
+			if path.startswith("/assets/") and path.endswith("/sw.js"):
+				headers.append(("Service-Worker-Allowed", "/"))
+
 			if (
-				(path := environ.get("PATH_INFO", ""))
-				and path.startswith("/files/")
+				path.startswith("/files/")
 				and path.lower().endswith(FORCE_DOWNLOAD_EXTENSIONS)
 			):
 				from urllib.parse import quote
