@@ -25,6 +25,7 @@ from frappe.auth import SAFE_HTTP_METHODS, UNSAFE_HTTP_METHODS, HTTPRequest, che
 from frappe.integrations.oauth2 import get_resource_url, handle_wellknown, is_oauth_metadata_enabled
 from frappe.middlewares import StaticDataMiddleware
 from frappe.permissions import handle_does_not_exist_error
+from frappe.security.request_policy import enforce_request_policy
 from frappe.utils import CallbackManager, cint, get_site_name
 from frappe.utils.data import escape_html
 from frappe.utils.error import log_error, log_error_snapshot
@@ -102,6 +103,7 @@ def application(request: Request):
 		init_request(request)
 
 		validate_auth()
+		enforce_request_policy(request)
 
 		if request.method == "OPTIONS":
 			response = Response()

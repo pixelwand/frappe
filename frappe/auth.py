@@ -13,6 +13,7 @@ import frappe.utils.user
 from frappe import _
 from frappe.apps import get_default_path
 from frappe.core.doctype.activity_log.activity_log import add_authentication_log
+from frappe.security.request_policy import should_skip_token_validation
 from frappe.sessions import Session, clear_sessions, delete_session, get_expiry_in_seconds
 from frappe.translate import get_language
 from frappe.twofactor import (
@@ -82,6 +83,7 @@ class HTTPRequest:
 		if (
 			not frappe.request
 			or frappe.request.method not in UNSAFE_HTTP_METHODS
+			or should_skip_token_validation()
 			or frappe.conf.ignore_csrf
 			or not frappe.session
 			or not (saved_token := frappe.session.data.csrf_token)
@@ -213,10 +215,17 @@ class LoginManager:
 			frappe.local.response["redirect_to"] = redirect_to
 			frappe.cache.hdel("redirect_after_login", self.user)
 
-		frappe.local.cookie_manager.set_cookie("full_name", self.full_name, deduplicate=True)
-		frappe.local.cookie_manager.set_cookie("user_id", self.user, deduplicate=True)
-		frappe.local.cookie_manager.set_cookie("user_image", self.info.user_image or "", deduplicate=True)
-		frappe.local.cookie_manager.set_cookie("user_lang", frappe.local.lang, deduplicate=True)
+		cookie_options = {"httponly": bool(frappe.conf.get("secure_auth_cookies", False))}
+		frappe.local.cookie_manager.set_cookie(
+			"full_name", self.full_name, deduplicate=True, **cookie_options
+		)
+		frappe.local.cookie_manager.set_cookie("user_id", self.user, deduplicate=True, **cookie_options)
+		frappe.local.cookie_manager.set_cookie(
+			"user_image", self.info.user_image or "", deduplicate=True, **cookie_options
+		)
+		frappe.local.cookie_manager.set_cookie(
+			"user_lang", frappe.local.lang, deduplicate=True, **cookie_options
+		)
 
 	def clear_preferred_language(self):
 		frappe.local.cookie_manager.delete_cookie("preferred_language")
@@ -404,7 +413,9 @@ class CookieManager:
 		max_age=None,
 		deduplicate=False,
 	):
-		if not secure and hasattr(frappe.local, "request"):
+		if frappe.conf.get("force_secure_cookies", False):
+			secure = True
+		elif not secure and hasattr(frappe.local, "request"):
 			secure = frappe.local.request.scheme == "https"
 		if (
 			deduplicate
@@ -630,6 +641,7 @@ def validate_auth():
 	"""
 	Authenticate and sets user for the request.
 	"""
+	frappe.local.auth_mechanism = None
 	authorization_header = frappe.get_request_header("Authorization", "").split(" ")
 
 	if len(authorization_header) == 2:
@@ -637,6 +649,10 @@ def validate_auth():
 		validate_auth_via_api_keys(authorization_header)
 
 	validate_auth_via_hooks()
+	if frappe.local.auth_mechanism is None:
+		frappe.local.auth_mechanism = (
+			"session" if frappe.session.user not in ("", "Guest", None) else "guest"
+		)
 
 	# If login via bearer, basic or keypair didn't work then authentication failed and we
 	# should terminate here.
@@ -679,6 +695,7 @@ def validate_oauth(authorization_header):
 		)
 		if valid:
 			frappe.set_user(frappe.db.get_value("OAuth Bearer Token", token, "user"))
+			frappe.local.auth_mechanism = "oauth"
 			frappe.local.form_dict = form_dict
 	except AttributeError:
 		pass
@@ -734,6 +751,7 @@ def validate_api_key_secret(api_key, api_secret, frappe_authorization_source=Non
 			user = frappe.db.get_value(doctype, docname, "user")
 		if frappe.local.login_manager.user in ("", "Guest"):
 			frappe.set_user(user)
+		frappe.local.auth_mechanism = "api_key"
 		frappe.local.form_dict = form_dict
 	else:
 		raise frappe.AuthenticationError
