@@ -8,12 +8,31 @@ from frappe.security.request_policy import DenialReason, evaluate_request
 from frappe.tests import UnitTestCase
 
 
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+def _policy_test_guest_endpoint():
+	return "ok"
+
+
+@frappe.whitelist(methods=["POST"])
+def _policy_test_authed_endpoint():
+	return "ok"
+
+
 class TestOriginRequestPolicy(UnitTestCase):
-	def make_request(self, *, headers=None, content_type="application/json"):
+	GUEST_PATH = "/api/method/frappe.tests.test_request_policy._policy_test_guest_endpoint"
+	AUTHED_PATH = "/api/method/frappe.tests.test_request_policy._policy_test_authed_endpoint"
+
+	def make_request(
+		self,
+		*,
+		path="/api/method/example.mutate",
+		headers=None,
+		content_type="application/json",
+	):
 		return Request(
 			EnvironBuilder(
 				method="POST",
-				path="/api/method/example.mutate",
+				path=path,
 				headers=headers or {},
 				content_type=content_type,
 			).get_environ()
@@ -110,5 +129,35 @@ class TestOriginRequestPolicy(UnitTestCase):
 			self.make_request(headers={"Authorization": "Bearer opaque-token"}),
 			user="Guest",
 			mechanism="bearer",
+		)
+		self.assertTrue(decision.allowed)
+
+	def guest_headers(self):
+		return {
+			"Origin": "https://crm.pixelwand.io",
+			"Sec-Fetch-Site": "same-origin",
+		}
+
+	def test_codebase_guest_method_needs_no_config_entry(self):
+		decision = self.evaluate(
+			self.make_request(path=self.GUEST_PATH, headers=self.guest_headers()),
+			user="Guest",
+			mechanism="guest",
+		)
+		self.assertTrue(decision.allowed)
+
+	def test_codebase_authed_method_still_denies_guest(self):
+		decision = self.evaluate(
+			self.make_request(path=self.AUTHED_PATH, headers=self.guest_headers()),
+			user="Guest",
+			mechanism="guest",
+		)
+		self.assertEqual(decision.reason, DenialReason.UNKNOWN_AUTH_MECHANISM)
+
+	def test_login_cmd_keeps_auth_error_instead_of_policy_denial(self):
+		decision = self.evaluate(
+			self.make_request(path="/api/method/login", headers=self.guest_headers()),
+			user="Guest",
+			mechanism="guest",
 		)
 		self.assertTrue(decision.allowed)
