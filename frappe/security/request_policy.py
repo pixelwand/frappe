@@ -106,6 +106,40 @@ def _path_is_configured(path: str, setting: str) -> bool:
 	return any(path == prefix or path.startswith(prefix.rstrip("/") + "/") for prefix in _configured_paths(setting))
 
 
+def _cmd_from_api_path(path: str) -> str | None:
+	if not path.startswith("/api/method/"):
+		return None
+	cmd = path[len("/api/method/") :].strip("/")
+	return cmd or None
+
+
+def _is_codebase_guest_path(path: str) -> bool:
+	"""Return whether the path maps to a guest-whitelisted method.
+
+	The `@frappe.whitelist(allow_guest=True)` registry is the source of
+	truth, so new public endpoints need no config change. `cmd == "login"`
+	is inherently pre-authentication (LoginManager authenticates during
+	`validate_auth`, before the handler runs), so failed logins keep their
+	proper auth error instead of a policy denial. Unresolvable commands
+	fall back to the configured `origin_policy_guest_paths`, which remain
+	the escape hatch for non-method routes (REST, pages, core uploads).
+	"""
+	cmd = _cmd_from_api_path(path)
+	if cmd is None:
+		return False
+	if cmd == "login":
+		return True
+	try:
+		cmd = frappe.override_whitelisted_method(cmd)
+		from frappe.handler import get_attr
+
+		method = get_attr(cmd)
+	except Exception:
+		frappe.logger("frappe.security").debug("Unable to resolve method for origin policy", exc_info=True)
+		return False
+	return method in frappe.guest_methods
+
+
 def _is_explicitly_authenticated() -> bool:
 	mechanism = getattr(frappe.local, "auth_mechanism", None)
 	if mechanism in {"oauth", "api_key", "bearer", "service"}:
@@ -207,8 +241,8 @@ def evaluate_request(request) -> PolicyDecision:
 	):
 		return PolicyDecision(False, DenialReason.SIMPLE_CONTENT_TYPE)
 
-	if not _is_explicitly_authenticated() and not _path_is_configured(
-		path, "origin_policy_guest_paths"
+	if not _is_explicitly_authenticated() and not (
+		_path_is_configured(path, "origin_policy_guest_paths") or _is_codebase_guest_path(path)
 	):
 		return PolicyDecision(False, DenialReason.UNKNOWN_AUTH_MECHANISM)
 
