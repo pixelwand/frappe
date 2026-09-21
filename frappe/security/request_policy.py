@@ -19,6 +19,12 @@ from frappe import _
 SAFE_METHODS: Final = frozenset({"GET", "HEAD", "OPTIONS"})
 JSON_CONTENT_TYPES: Final = frozenset({"application/json", "application/*+json"})
 
+# Core upload route. Frappe enforces its own auth on it (guests only when
+# `allow_guests_to_upload_files` is set), so the content-type policy defers
+# to it instead of requiring a per-site config entry. Sites extend the
+# exemption via `origin_policy_multipart_paths`.
+BUILTIN_MULTIPART_PATHS: Final = ("/api/method/upload_file",)
+
 
 class PolicyMode(StrEnum):
 	TOKEN = "token"
@@ -232,7 +238,9 @@ def evaluate_request(request) -> PolicyDecision:
 
 	content_type = (request.mimetype or "").lower()
 	if content_type == "multipart/form-data":
-		if not _path_is_configured(path, "origin_policy_multipart_paths"):
+		if path not in BUILTIN_MULTIPART_PATHS and not _path_is_configured(
+			path, "origin_policy_multipart_paths"
+		):
 			return PolicyDecision(False, DenialReason.SIMPLE_CONTENT_TYPE)
 	elif not (
 		content_type in JSON_CONTENT_TYPES or content_type.endswith("+json")

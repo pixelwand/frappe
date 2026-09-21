@@ -161,3 +161,26 @@ class TestOriginRequestPolicy(UnitTestCase):
 			mechanism="guest",
 		)
 		self.assertTrue(decision.allowed)
+
+	def test_builtin_upload_path_needs_no_multipart_config(self):
+		decision = self.evaluate(
+			self.make_request(
+				path="/api/method/upload_file",
+				headers=self.guest_headers(),
+				content_type="multipart/form-data",
+			),
+			user="test@example.com",
+			mechanism="session",
+		)
+		self.assertTrue(decision.allowed)
+
+	def test_other_multipart_paths_still_need_config(self):
+		decision = self.evaluate(
+			self.make_request(
+				headers=self.guest_headers(),
+				content_type="multipart/form-data",
+			),
+			user="test@example.com",
+			mechanism="session",
+		)
+		self.assertEqual(decision.reason, DenialReason.SIMPLE_CONTENT_TYPE)
