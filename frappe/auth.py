@@ -390,6 +390,33 @@ class LoginManager:
 		clear_cookies()
 
 
+def session_cookie_domain() -> str | None:
+	"""Parent domain for the session cookie (pixelwand fork addition).
+
+	Set `session_cookie_domain` in site_config.json (e.g. ".pixelwand.io") to
+	share the login session across the apex and all subdomains (crm, www).
+	Unset (default) keeps the historical host-only cookie.
+
+	Only the `sid` cookie uses this; website UX cookies stay host-only.
+	Enable on the production site config only — browsers reject a Domain
+	that does not suffix-match the serving host, so setting it locally
+	(crm.localhost) would silently break logins there.
+	"""
+	domain = (frappe.conf.get("session_cookie_domain") or "").strip()
+	if not domain:
+		return None
+	request = getattr(frappe.local, "request", None)
+	host = (getattr(request, "host", "") or "").split(":")[0].lower()
+	suffix = domain.lstrip(".").lower()
+	if host and host != suffix and not host.endswith("." + suffix):
+		frappe.logger("auth").warning(
+			"session_cookie_domain %r does not match serving host %r; browsers will reject the sid cookie",
+			domain,
+			host,
+		)
+	return domain
+
+
 class CookieManager:
 	def __init__(self):
 		self.cookies = {}
@@ -400,7 +427,13 @@ class CookieManager:
 			return
 
 		if frappe.session.sid:
-			self.set_cookie("sid", frappe.session.sid, max_age=get_expiry_in_seconds(), httponly=True)
+			self.set_cookie(
+				"sid",
+				frappe.session.sid,
+				max_age=get_expiry_in_seconds(),
+				httponly=True,
+				domain=session_cookie_domain(),
+			)
 
 	def set_cookie(
 		self,
@@ -412,6 +445,7 @@ class CookieManager:
 		samesite="Lax",
 		max_age=None,
 		deduplicate=False,
+		domain=None,
 	):
 		if frappe.conf.get("force_secure_cookies", False):
 			secure = True
@@ -432,6 +466,7 @@ class CookieManager:
 			"httponly": httponly,
 			"samesite": samesite,
 			"max_age": max_age,
+			"domain": domain,
 		}
 
 	def delete_cookie(self, to_delete):
@@ -450,12 +485,19 @@ class CookieManager:
 				httponly=opts.get("httponly"),
 				samesite=opts.get("samesite"),
 				max_age=opts.get("max_age"),
+				domain=opts.get("domain"),
 			)
 
-		# expires yesterday!
+		# expires yesterday! A cleared sid must carry the same Domain it was
+		# set with, or a domain-scoped session survives logout.
 		expires = datetime.datetime.now() + datetime.timedelta(days=-1)
 		for key in set(self.to_delete):
-			response.set_cookie(key, "", expires=expires)
+			response.set_cookie(
+				key,
+				"",
+				expires=expires,
+				domain=session_cookie_domain() if key == "sid" else None,
+			)
 
 
 @frappe.whitelist()
