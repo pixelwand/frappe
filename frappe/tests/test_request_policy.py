@@ -4,7 +4,11 @@ from werkzeug.test import EnvironBuilder
 from werkzeug.wrappers import Request
 
 import frappe
-from frappe.security.request_policy import DenialReason, evaluate_request
+from frappe.security.request_policy import (
+	DenialReason,
+	evaluate_request,
+	should_skip_token_validation,
+)
 from frappe.tests import UnitTestCase
 
 
@@ -131,6 +135,37 @@ class TestOriginRequestPolicy(UnitTestCase):
 			mechanism="bearer",
 		)
 		self.assertTrue(decision.allowed)
+
+	def navigation_headers(self):
+		return {
+			"Origin": "https://crm.pixelwand.io",
+			"Sec-Fetch-Site": "same-origin",
+			"Sec-Fetch-Mode": "navigate",
+			"Sec-Fetch-Dest": "document",
+		}
+
+	def test_browser_navigation_defers_to_token_policy(self):
+		decision = self.evaluate(
+			self.make_request(
+				headers=self.navigation_headers(),
+				content_type="application/x-www-form-urlencoded",
+			)
+		)
+		self.assertTrue(decision.allowed)
+
+	def test_token_validation_stays_for_navigations_under_enforce(self):
+		with patch.object(frappe, "conf", frappe._dict({"csrf_policy": "origin_enforce"})):
+			self.assertFalse(
+				should_skip_token_validation(self.make_request(headers=self.navigation_headers()))
+			)
+
+	def test_token_validation_is_replaced_for_fetches_under_enforce(self):
+		with patch.object(frappe, "conf", frappe._dict({"csrf_policy": "origin_enforce"})):
+			self.assertTrue(
+				should_skip_token_validation(
+					self.make_request(headers={"Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty"})
+				)
+			)
 
 	def guest_headers(self):
 		return {

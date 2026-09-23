@@ -4,6 +4,10 @@ The legacy synchronizer-token policy remains the default. Sites can opt into
 ``origin_shadow`` to measure the replacement policy without changing request
 outcomes, then use ``origin_enforce`` after the client inventory and tests are
 complete.
+
+Browser navigations (form POSTs, ``window.open``) are not covered by this
+policy: they cannot set custom headers or JSON bodies, so they keep the
+synchronizer-token check.
 """
 
 from __future__ import annotations
@@ -24,6 +28,9 @@ JSON_CONTENT_TYPES: Final = frozenset({"application/json", "application/*+json"}
 # to it instead of requiring a per-site config entry. Sites extend the
 # exemption via `origin_policy_multipart_paths`.
 BUILTIN_MULTIPART_PATHS: Final = ("/api/method/upload_file",)
+
+# Fetch destinations that only occur for browser document navigations.
+NAVIGATION_DESTS: Final = frozenset({"document", "iframe", "frame", "object", "embed"})
 
 
 class PolicyMode(StrEnum):
@@ -191,6 +198,21 @@ def _record_shadow_violation(reason: DenialReason, request) -> None:
 		frappe.logger("frappe.security").debug("Unable to record origin policy telemetry")
 
 
+def is_browser_navigation(request=None) -> bool:
+	"""Return whether the request is a browser document navigation.
+
+	Form submissions and ``window.open`` POSTs are navigations. They carry
+	no fetch metadata this policy can rely on and cannot set custom headers
+	or JSON bodies, so they stay on the synchronizer-token check.
+	"""
+	request = request if request is not None else getattr(frappe.local, "request", None)
+	if request is None:
+		return False
+	mode = (request.headers.get("Sec-Fetch-Mode") or "").lower()
+	dest = (request.headers.get("Sec-Fetch-Dest") or "").lower()
+	return mode == "navigate" or dest in NAVIGATION_DESTS
+
+
 def evaluate_request(request) -> PolicyDecision:
 	"""Evaluate origin policy for the current request after authentication."""
 	if request.method in SAFE_METHODS:
@@ -205,6 +227,11 @@ def evaluate_request(request) -> PolicyDecision:
 		"bearer",
 		"service",
 	}:
+		return PolicyDecision(True)
+
+	# Browser navigations (form submits, window.open) are covered by the
+	# synchronizer-token check in the auth layer instead of fetch metadata.
+	if is_browser_navigation(request):
 		return PolicyDecision(True)
 
 	path = request.path or "/"
@@ -276,6 +303,10 @@ def enforce_request_policy(request) -> None:
 	frappe.throw(_("Invalid Request"), frappe.CSRFTokenError)
 
 
-def should_skip_token_validation() -> bool:
-	"""Return whether origin enforcement replaces the synchronizer token."""
-	return get_policy_mode() is PolicyMode.ORIGIN_ENFORCE
+def should_skip_token_validation(request=None) -> bool:
+	"""Return whether origin enforcement replaces the synchronizer token.
+
+	Browser navigations are excluded: the origin policy cannot cover them,
+	so the token check remains their CSRF protection.
+	"""
+	return get_policy_mode() is PolicyMode.ORIGIN_ENFORCE and not is_browser_navigation(request)
