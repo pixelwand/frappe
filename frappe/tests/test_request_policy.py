@@ -42,10 +42,10 @@ class TestOriginRequestPolicy(UnitTestCase):
 			).get_environ()
 		)
 
-	def evaluate(self, request, *, user="test@example.com", mechanism="session"):
+	def evaluate(self, request, *, user="test@example.com", mechanism="session", trusted=None):
 		with (
 			patch.object(frappe, "conf", frappe._dict({
-				"trusted_browser_origins": ["https://crm.pixelwand.io"],
+				"trusted_browser_origins": trusted or ["https://crm.pixelwand.io"],
 			})),
 			patch.object(frappe.local, "site", "test_site", create=True),
 			patch.object(frappe.local, "session", frappe._dict({"user": user}), create=True),
@@ -80,8 +80,8 @@ class TestOriginRequestPolicy(UnitTestCase):
 		)
 		self.assertEqual(decision.reason, DenialReason.UNTRUSTED_ORIGIN)
 
-	def test_rejects_cross_site_and_same_site_fetches(self):
-		for fetch_site in ("cross-site", "same-site"):
+	def test_rejects_cross_site_fetches(self):
+		for fetch_site in ("cross-site", "none"):
 			with self.subTest(fetch_site=fetch_site):
 				decision = self.evaluate(
 					self.make_request(
@@ -92,6 +92,26 @@ class TestOriginRequestPolicy(UnitTestCase):
 					)
 				)
 				self.assertEqual(decision.reason, DenialReason.CROSS_SITE_FETCH)
+
+	def test_accepts_same_site_fetch_from_trusted_origin(self):
+		# www -> crm/api is same-site (shared eTLD+1): allowed once the
+		# Origin is in trusted_browser_origins. Sec-Fetch-* is
+		# browser-controlled, so an attacker cannot spoof this shape —
+		# their origin would fail the trust check above.
+		decision = self.evaluate(
+			self.make_request(
+				headers={
+					"Origin": "https://www.pixelwand.io",
+					"Sec-Fetch-Site": "same-site",
+					"Sec-Fetch-Mode": "cors",
+					"Sec-Fetch-Dest": "empty",
+				}
+			),
+			user="test@example.com",
+			mechanism="session",
+			trusted=["https://www.pixelwand.io"],
+		)
+		self.assertTrue(decision.allowed)
 
 	def test_rejects_missing_origin(self):
 		decision = self.evaluate(

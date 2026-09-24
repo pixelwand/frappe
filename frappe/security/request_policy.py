@@ -245,17 +245,22 @@ def evaluate_request(request) -> PolicyDecision:
 	if canonical not in _trusted_origins():
 		return PolicyDecision(False, DenialReason.UNTRUSTED_ORIGIN)
 
-	fetch_site = frappe.get_request_header("Sec-Fetch-Site").lower()
+	fetch_site = (frappe.get_request_header("Sec-Fetch-Site") or "").lower()
 	if not fetch_site and frappe.conf.get("require_fetch_metadata", True):
 		return PolicyDecision(False, DenialReason.MISSING_FETCH_METADATA)
-	if fetch_site in {"cross-site", "same-site", "none"}:
+	# Same-site is the legitimate shape for trusted first-party subdomains
+	# (www -> crm/api): the Origin above is already verified against
+	# trusted_browser_origins, and Sec-Fetch-* headers are browser-controlled
+	# (forbidden to page JS), so a CSRF attacker cannot spoof them — their
+	# origin simply won't be trusted. Cross-site/none stay denied.
+	if fetch_site in {"cross-site", "none"}:
 		return PolicyDecision(False, DenialReason.CROSS_SITE_FETCH)
-	if fetch_site and fetch_site != "same-origin":
+	if fetch_site and fetch_site not in {"same-origin", "same-site"}:
 		return PolicyDecision(False, DenialReason.CROSS_SITE_FETCH)
 
 	navigation_path = _path_is_configured(path, "origin_policy_navigation_paths")
-	fetch_mode = frappe.get_request_header("Sec-Fetch-Mode").lower()
-	fetch_dest = frappe.get_request_header("Sec-Fetch-Dest").lower()
+	fetch_mode = (frappe.get_request_header("Sec-Fetch-Mode") or "").lower()
+	fetch_dest = (frappe.get_request_header("Sec-Fetch-Dest") or "").lower()
 	if fetch_mode in {"navigate", "no-cors"} and not navigation_path:
 		return PolicyDecision(False, DenialReason.INVALID_NAVIGATION)
 	if fetch_mode == "navigate" and fetch_dest not in {"", "document"}:
