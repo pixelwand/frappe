@@ -153,6 +153,39 @@ def _is_codebase_guest_path(path: str) -> bool:
 	return method in frappe.guest_methods
 
 
+def _website_rpc_command(request, path: str) -> str | None:
+	"""Dotted method for website-style RPC POSTed to ``/``.
+
+	The framework website bundle posts guest calls (public web forms, etc.)
+	as form-encoded bodies to ``/`` with ``cmd`` (plus ``X-Frappe-Cmd``),
+	not as JSON to ``/api/method/...``. Resolve the effective command the
+	same way the handler will, so guest-registry checks apply uniformly.
+	Reads the already-parsed ``form_dict`` (populated for both urlencoded
+	and JSON bodies before the policy runs) with the header as fallback.
+	"""
+	if path != "/":
+		return None
+	header_cmd = (frappe.get_request_header("X-Frappe-Cmd") or "").strip()
+	if header_cmd:
+		return header_cmd
+	form_dict = getattr(frappe.local, "form_dict", None)
+	cmd = (form_dict.get("cmd") or "").strip() if form_dict else ""
+	return cmd or None
+
+
+def _is_guest_website_rpc(request, path: str) -> bool:
+	"""Whether a ``/`` website-RPC request targets a guest-whitelisted method.
+
+	Reuses the ``@whitelist(allow_guest=True)`` registry (including
+	``override_whitelisted_method``) as the single source of truth, so new
+	public endpoints need no config change here either.
+	"""
+	cmd = _website_rpc_command(request, path)
+	if not cmd:
+		return False
+	return _is_codebase_guest_path(f"/api/method/{cmd}")
+
+
 def _is_explicitly_authenticated() -> bool:
 	mechanism = getattr(frappe.local, "auth_mechanism", None)
 	if mechanism in {"oauth", "api_key", "bearer", "service"}:
@@ -274,6 +307,14 @@ def evaluate_request(request) -> PolicyDecision:
 			path, "origin_policy_multipart_paths"
 		):
 			return PolicyDecision(False, DenialReason.SIMPLE_CONTENT_TYPE)
+	elif content_type == "application/x-www-form-urlencoded" and _is_guest_website_rpc(
+		request, path
+	):
+		# Website-bundle guest RPC (public web forms): the page posts
+		# form-encoded to `/`, never JSON to `/api/method`. Origin and
+		# fetch-metadata above already proved same-origin, so this carries
+		# no more CSRF capability than the equivalent JSON call.
+		pass
 	elif not (
 		content_type in JSON_CONTENT_TYPES or content_type.endswith("+json")
 	) and not _path_is_configured(
@@ -282,7 +323,9 @@ def evaluate_request(request) -> PolicyDecision:
 		return PolicyDecision(False, DenialReason.SIMPLE_CONTENT_TYPE)
 
 	if not _is_explicitly_authenticated() and not (
-		_path_is_configured(path, "origin_policy_guest_paths") or _is_codebase_guest_path(path)
+		_path_is_configured(path, "origin_policy_guest_paths")
+		or _is_codebase_guest_path(path)
+		or _is_guest_website_rpc(request, path)
 	):
 		return PolicyDecision(False, DenialReason.UNKNOWN_AUTH_MECHANISM)
 

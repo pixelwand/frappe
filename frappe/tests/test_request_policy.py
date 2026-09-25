@@ -239,3 +239,69 @@ class TestOriginRequestPolicy(UnitTestCase):
 			mechanism="session",
 		)
 		self.assertEqual(decision.reason, DenialReason.SIMPLE_CONTENT_TYPE)
+
+	def website_rpc_request(self, cmd, *, via_header=True, content_type="application/x-www-form-urlencoded"):
+		headers = dict(self.guest_headers())
+		if via_header:
+			headers["X-Frappe-Cmd"] = cmd
+		return self.make_request(
+			path="/",
+			headers=headers,
+			content_type=content_type,
+		)
+
+	def test_website_rpc_guest_cmd_form_encoded_allowed(self):
+		decision = self.evaluate(
+			self.website_rpc_request(
+				"frappe.tests.test_request_policy._policy_test_guest_endpoint"
+			),
+			user="Guest",
+			mechanism="guest",
+		)
+		self.assertTrue(decision.allowed)
+
+	def test_website_rpc_guest_cmd_from_form_body_allowed(self):
+		request = self.website_rpc_request("unused", via_header=False)
+		with patch.object(
+			frappe.local,
+			"form_dict",
+			frappe._dict({
+				"cmd": "frappe.tests.test_request_policy._policy_test_guest_endpoint"
+			}),
+			create=True,
+		):
+			decision = self.evaluate(request, user="Guest", mechanism="guest")
+		self.assertTrue(decision.allowed)
+
+	def test_website_rpc_guest_cmd_json_allowed(self):
+		decision = self.evaluate(
+			self.website_rpc_request(
+				"frappe.tests.test_request_policy._policy_test_guest_endpoint",
+				content_type="application/json",
+			),
+			user="Guest",
+			mechanism="guest",
+		)
+		self.assertTrue(decision.allowed)
+
+	def test_website_rpc_authed_cmd_still_denied(self):
+		decision = self.evaluate(
+			self.website_rpc_request(
+				"frappe.tests.test_request_policy._policy_test_authed_endpoint"
+			),
+			user="Guest",
+			mechanism="guest",
+		)
+		self.assertEqual(decision.reason, DenialReason.SIMPLE_CONTENT_TYPE)
+
+	def test_website_rpc_unknown_cmd_still_denied(self):
+		# Unresolvable cmds log at debug inside _is_codebase_guest_path;
+		# silence the file logger (the suite patches the site name, so
+		# there is no site log dir to write to).
+		with patch("frappe.logger"):
+			decision = self.evaluate(
+				self.website_rpc_request("no.such.cmd"),
+				user="Guest",
+				mechanism="guest",
+			)
+		self.assertEqual(decision.reason, DenialReason.SIMPLE_CONTENT_TYPE)
