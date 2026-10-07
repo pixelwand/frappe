@@ -234,7 +234,7 @@ def get_doc_permissions(doc, user=None, ptype=None, debug=False):
 	def is_user_owner():
 		return (doc.get("owner") or "").lower() == user.lower()
 
-	if not has_controller_permissions(doc, ptype, user=user, debug=debug):
+	if ptype is not None and not has_controller_permissions(doc, ptype, user=user, debug=debug):
 		push_perm_check_log(_("Not allowed via controller permission check"), debug=debug)
 		return {ptype: 0}
 
@@ -271,6 +271,16 @@ def get_doc_permissions(doc, user=None, ptype=None, debug=False):
 		else:
 			debug and _debug_log("User has no permissions because of User Permissions")
 			permissions = {}
+
+	if ptype is None:
+		# A summary must evaluate action-specific hooks individually. Passing
+		# None can deny the entire summary or miss a denial for one action.
+		# Hooks only narrow the role/user grants; they cannot add permissions.
+		for action in rights:
+			if permissions.get(action) and not has_controller_permissions(
+				doc, action, user=user, debug=debug
+			):
+				permissions[action] = 0
 
 	debug and _debug_log(
 		"Final applicable permissions after evaluating user permissions: "
