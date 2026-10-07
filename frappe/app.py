@@ -168,6 +168,15 @@ def application(request: Request):
 	return response
 
 
+# Production WSGI servers (gunicorn) import `application` directly from this
+# module. Trust the terminating reverse proxy's X-Forwarded-* headers so
+# request.url reflects the public scheme/host. Without this, everything
+# derived from the request URL (OAuth discovery metadata, webhooks,
+# redirects) reports http:// behind a TLS-terminating proxy. Mirrors the
+# ProxyFix applied in serve() for the dev server.
+application = ProxyFix(application, x_for=1, x_proto=1, x_host=1, x_port=1, x_prefix=1)
+
+
 def run_after_request_hooks(request, response):
 	if not getattr(frappe.local, "initialised", False):
 		return
