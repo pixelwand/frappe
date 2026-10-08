@@ -262,6 +262,21 @@ def evaluate_request(request) -> PolicyDecision:
 	}:
 		return PolicyDecision(True)
 
+	# OAuth protocol clients register and exchange codes without browser Origin
+	# or Fetch Metadata headers. These handlers authorize via their protocol
+	# inputs, not ambient session cookies; authenticated sessions stay covered.
+	if (
+		request.method == "POST"
+		and frappe.session.user == "Guest"
+		and request.path in {
+			"/api/method/frappe.integrations.oauth2.register_client",
+			"/api/v1/method/frappe.integrations.oauth2.register_client",
+			"/api/method/frappe.integrations.oauth2.get_token",
+			"/api/v1/method/frappe.integrations.oauth2.get_token",
+		}
+	):
+		return PolicyDecision(True)
+
 	# Browser navigations (form submits, window.open) are covered by the
 	# synchronizer-token check in the auth layer instead of fetch metadata.
 	if is_browser_navigation(request):

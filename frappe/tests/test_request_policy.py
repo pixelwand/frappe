@@ -113,6 +113,25 @@ class TestOriginRequestPolicy(UnitTestCase):
 		)
 		self.assertTrue(decision.allowed)
 
+	def test_guest_oauth_protocol_posts_do_not_require_browser_origin(self):
+		for prefix in ("/api/method/", "/api/v1/method/"):
+			for method, content_type in (
+				("register_client", "application/json"),
+				("get_token", "application/x-www-form-urlencoded"),
+			):
+				path = f"{prefix}frappe.integrations.oauth2.{method}"
+				with self.subTest(path=path):
+					request = self.make_request(path=path, content_type=content_type)
+					self.assertTrue(self.evaluate(request, user="Guest", mechanism="guest").allowed)
+					self.assertEqual(self.evaluate(request).reason, DenialReason.MISSING_ORIGIN)
+		for method in ("approve", "authorize", "register_client.other"):
+			with self.subTest(method=method):
+				request = self.make_request(path=f"/api/method/frappe.integrations.oauth2.{method}")
+				self.assertEqual(
+					self.evaluate(request, user="Guest", mechanism="guest").reason,
+					DenialReason.MISSING_ORIGIN,
+				)
+
 	def test_rejects_missing_origin(self):
 		decision = self.evaluate(
 			self.make_request(headers={"Sec-Fetch-Site": "same-origin"})
