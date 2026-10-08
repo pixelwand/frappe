@@ -86,6 +86,13 @@ class HTTPRequest:
 			or should_skip_token_validation()
 			or frappe.conf.ignore_csrf
 			or not frappe.session
+			# Public OAuth client registration has no authenticated authority and
+			# must work before the client can open a browser login session.
+			or (
+				frappe.session.user == "Guest"
+				and frappe.request.path == "/api/method/frappe.integrations.oauth2.register_client"
+				and frappe.request.method == "POST"
+			)
 			or not (saved_token := frappe.session.data.csrf_token)
 			or (
 				(frappe.get_request_header("X-Frappe-CSRF-Token") or frappe.form_dict.pop("csrf_token", None))
