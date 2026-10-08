@@ -11,6 +11,7 @@ from pydantic import BaseModel, HttpUrl
 
 import frappe
 from frappe.integrations.doctype.oauth_client.oauth_client import OAuthClient
+from frappe.permissions import ALL_USER_ROLE
 from frappe.utils import get_request_session
 
 
@@ -249,6 +250,10 @@ def create_new_oauth_client(client: OAuth2DynamicClientMetadata):
 	doc.response_type = "Code"
 	doc.grant_type = "Authorization Code"
 	doc.skip_authorization = False
+	# Dynamic registration is for external clients used by authenticated
+	# website users as well as Desk users. Resource permissions still apply
+	# to issued tokens; registration must not require access to Desk.
+	doc.append("allowed_roles", {"role": ALL_USER_ROLE})
 
 	if client.client_uri:
 		doc.client_uri = client.client_uri.encoded_string()
