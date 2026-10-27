@@ -219,3 +219,37 @@ class TestExternallyDeliveredEmailQueue(IntegrationTestCase):
 		retry_sending_emails()
 		self.assertEqual(frappe.db.get_value("Email Queue", brick.name, "status"), "Sending")
 		self.assertNotEqual(frappe.db.get_value("Email Queue", frappe_row.name, "status"), "Sending")
+
+
+class TestForeignAttachmentKeys(IntegrationTestCase):
+	"""An attachment entry with keys add_attachment does not take (as the CRM's Brick writes) still sends."""
+
+	@staticmethod
+	def _multipart():
+		from email.mime.multipart import MIMEMultipart
+		from email.mime.text import MIMEText
+
+		message = MIMEMultipart("mixed")
+		message["Subject"] = "x"
+		message.attach(MIMEText("body"))
+		return message.as_string()
+
+	def test_unknown_attachment_keys_are_ignored(self):
+		_file = frappe.get_doc(
+			{"doctype": "File", "file_name": "brick-shaped.txt", "content": b"hello", "is_private": 1}
+		).insert(ignore_permissions=True)
+		row = frappe.get_doc(
+			{
+				"doctype": "Email Queue",
+				"sender": "Test <test@example.com>",
+				"message": self._multipart(),
+				"status": "Not Sent",
+				"attachments": frappe.as_json(
+					[{"fid": _file.name, "file_url": _file.file_url, "content_hash": _file.content_hash}]
+				),
+				"recipients": [{"recipient": "test_attach@example.com"}],
+			}
+		).insert(ignore_permissions=True)
+		with SendMailContext(row) as ctx:
+			message = ctx.include_attachments(row.message)
+		self.assertIn(b"brick-shaped.txt", message)

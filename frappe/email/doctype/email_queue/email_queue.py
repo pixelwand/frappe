@@ -44,6 +44,9 @@ REDACTED_MESSAGE = "[THE FOLLOWING CONTENT HAS BEEN REDACTED FOR SECURITY REASON
 
 # Rows the CRM app's Brick API delivers itself carry this custom field set to
 # "brick"; Frappe must never send them, whichever path reaches the row.
+#: The keyword arguments `add_attachment` accepts.
+ADD_ATTACHMENT_KEYS = ("fname", "fcontent", "content_type", "parent", "content_id", "inline")
+
 DELIVERY_OWNER_FIELD = "crm_delivery_owner"
 EXTERNAL_DELIVERY_OWNER = "brick"
 
@@ -488,9 +491,9 @@ class SendMailContext:
 				_file = frappe.get_doc("File", file_filters)
 				fcontent = _file.get_content()
 				attachment.update({"fname": _file.file_name, "fcontent": fcontent, "parent": message_obj})
-				attachment.pop("fid", None)
-				attachment.pop("file_url", None)
-				add_attachment(**attachment)
+				# Only what add_attachment takes: rows queued by another backend carry extra keys
+				# (e.g. the CRM's content_hash pin) that would otherwise raise TypeError.
+				add_attachment(**{key: attachment[key] for key in ADD_ATTACHMENT_KEYS if key in attachment})
 
 			elif attachment.get("print_format_attachment") == 1:
 				attachment.pop("print_format_attachment", None)
