@@ -42,11 +42,11 @@ if TYPE_CHECKING:
 
 REDACTED_MESSAGE = "[THE FOLLOWING CONTENT HAS BEEN REDACTED FOR SECURITY REASONS]"
 
-# Rows the CRM app's Brick API delivers itself carry this custom field set to
-# "brick"; Frappe must never send them, whichever path reaches the row.
 #: The keyword arguments `add_attachment` accepts.
 ADD_ATTACHMENT_KEYS = ("fname", "fcontent", "content_type", "parent", "content_id", "inline")
 
+# Rows the CRM app's Brick API delivers itself carry this custom field set to
+# "brick"; Frappe must never send them, whichever path reaches the row.
 DELIVERY_OWNER_FIELD = "crm_delivery_owner"
 EXTERNAL_DELIVERY_OWNER = "brick"
 
