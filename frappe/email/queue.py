@@ -162,22 +162,37 @@ def flush():
 
 
 def get_queue():
+	from frappe.email.doctype.email_queue.email_queue import DELIVERY_OWNER_FIELD, EXTERNAL_DELIVERY_OWNER
+
 	batch_size = cint(frappe.conf.email_queue_batch_size) or 500
 	undo_window = add_to_date(now_datetime(), seconds=-10)
+	# Leave externally delivered rows out of the batch, or they would crowd
+	# Frappe's own rows out of the limit without ever being sent.
+	not_external = (
+		f"(coalesce({DELIVERY_OWNER_FIELD}, '') != %(external)s) and"
+		if frappe.db.has_column("Email Queue", DELIVERY_OWNER_FIELD)
+		else ""
+	)
 
 	return frappe.db.sql(
-		"""select
+		f"""select
 			name, sender
 		from
 			`tabEmail Queue`
 		where
 			(status='Not Sent' or status='Partially Sent') and
 			(send_after is null or send_after < %(now)s) and
+			{not_external}
 			(creation < %(undo_window)s)
 		order
 			by priority desc, retry asc, creation asc
 		limit %(batch_size)s""",
-		{"now": now_datetime(), "undo_window": undo_window, "batch_size": batch_size},
+		{
+			"now": now_datetime(),
+			"undo_window": undo_window,
+			"batch_size": batch_size,
+			"external": EXTERNAL_DELIVERY_OWNER,
+		},
 		as_dict=True,
 	)
 
@@ -192,6 +207,8 @@ def retry_sending_emails():
 		if now_datetime() - e["modified"] > timedelta(minutes=15):
 			update_fields = {}
 			email_queue = frappe.get_doc("Email Queue", e["name"])
+			if email_queue.is_externally_delivered():
+				continue  # its owner retries it
 			sent_to_atleast_one_recipient = any(
 				rec.recipient for rec in email_queue.recipients if rec.is_mail_sent()
 			)

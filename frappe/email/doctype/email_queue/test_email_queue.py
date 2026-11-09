@@ -2,6 +2,7 @@
 # License: MIT. See LICENSE
 import smtplib
 import textwrap
+import unittest.mock
 from unittest.mock import MagicMock
 
 import frappe
@@ -145,3 +146,110 @@ class TestEmailQueue(IntegrationTestCase):
 
 		self.assertIn(link, mock_session.sendmail.call_args.kwargs["msg"].decode())
 		self.assertNotIn(link, frappe.db.get_value("Email Queue", email_record.name, "message"))
+
+
+class TestExternallyDeliveredEmailQueue(IntegrationTestCase):
+	"""Rows owned by another backend (`crm_delivery_owner = "brick"`) are never sent here."""
+
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		from frappe.custom.doctype.custom_field.custom_field import create_custom_field
+
+		cls.created_field = not frappe.db.has_column("Email Queue", "crm_delivery_owner")
+		if cls.created_field:
+			create_custom_field("Email Queue", {"fieldname": "crm_delivery_owner", "fieldtype": "Data"})
+
+	@classmethod
+	def tearDownClass(cls):
+		if cls.created_field:
+			frappe.delete_doc("Custom Field", "Email Queue-crm_delivery_owner", force=True)
+			frappe.db.commit()
+		super().tearDownClass()
+
+	def make_queue(self, owner, status="Not Sent"):
+		row = frappe.get_doc(
+			{
+				"doctype": "Email Queue",
+				"sender": "Test <test@example.com>",
+				"message": "Test message",
+				"status": status,
+				"crm_delivery_owner": owner,
+				"recipients": [{"recipient": "test_external@example.com"}],
+			}
+		).insert()
+		frappe.db.set_value(
+			"Email Queue",
+			row.name,
+			{"creation": "2010-01-01 00:00:01", "modified": "2010-01-01 00:00:01"},
+			update_modified=False,
+		)
+		return frappe.get_doc("Email Queue", row.name)
+
+	def test_send_skips_brick_rows_even_when_forced(self):
+		row = self.make_queue("brick")
+		with unittest.mock.patch.object(SendMailContext, "__enter__") as enter:
+			row.send()
+			row.send(force_send=True)
+		enter.assert_not_called()
+
+	def test_frappe_rows_still_send(self):
+		row = self.make_queue("frappe")
+		with unittest.mock.patch.object(SendMailContext, "__enter__", side_effect=RuntimeError) as enter:
+			with self.assertRaises(RuntimeError):
+				row.send(force_send=True)
+		enter.assert_called_once()
+
+	def test_get_queue_leaves_out_brick_rows(self):
+		from frappe.email.queue import get_queue
+
+		brick = self.make_queue("brick")
+		frappe_row = self.make_queue("frappe")
+		unset = self.make_queue(None)
+		names = {row.name for row in get_queue()}
+		self.assertNotIn(brick.name, names)
+		self.assertIn(frappe_row.name, names)
+		self.assertIn(unset.name, names)
+
+	def test_retry_leaves_stuck_brick_rows_to_their_owner(self):
+		from frappe.email.queue import retry_sending_emails
+
+		brick = self.make_queue("brick", status="Sending")
+		frappe_row = self.make_queue("frappe", status="Sending")
+		retry_sending_emails()
+		self.assertEqual(frappe.db.get_value("Email Queue", brick.name, "status"), "Sending")
+		self.assertNotEqual(frappe.db.get_value("Email Queue", frappe_row.name, "status"), "Sending")
+
+
+class TestForeignAttachmentKeys(IntegrationTestCase):
+	"""An attachment entry with keys add_attachment does not take (as the CRM's Brick writes) still sends."""
+
+	@staticmethod
+	def _multipart():
+		from email.mime.multipart import MIMEMultipart
+		from email.mime.text import MIMEText
+
+		message = MIMEMultipart("mixed")
+		message["Subject"] = "x"
+		message.attach(MIMEText("body"))
+		return message.as_string()
+
+	def test_unknown_attachment_keys_are_ignored(self):
+		_file = frappe.get_doc(
+			{"doctype": "File", "file_name": "brick-shaped.txt", "content": b"hello", "is_private": 1}
+		).insert(ignore_permissions=True)
+		row = frappe.get_doc(
+			{
+				"doctype": "Email Queue",
+				"sender": "Test <test@example.com>",
+				"message": self._multipart(),
+				"status": "Not Sent",
+				"attachments": frappe.as_json(
+					[{"fid": _file.name, "file_url": _file.file_url, "content_hash": _file.content_hash}]
+				),
+				"recipients": [{"recipient": "test_attach@example.com"}],
+			}
+		).insert(ignore_permissions=True)
+		with SendMailContext(row) as ctx:
+			message = ctx.include_attachments(row.message)
+		self.assertIn(b"brick-shaped.txt", message)

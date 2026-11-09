@@ -42,6 +42,14 @@ if TYPE_CHECKING:
 
 REDACTED_MESSAGE = "[THE FOLLOWING CONTENT HAS BEEN REDACTED FOR SECURITY REASONS]"
 
+#: The keyword arguments `add_attachment` accepts.
+ADD_ATTACHMENT_KEYS = ("fname", "fcontent", "content_type", "parent", "content_id", "inline")
+
+# Rows the CRM app's Brick API delivers itself carry this custom field set to
+# "brick"; Frappe must never send them, whichever path reaches the row.
+DELIVERY_OWNER_FIELD = "crm_delivery_owner"
+EXTERNAL_DELIVERY_OWNER = "brick"
+
 
 class EmailQueue(Document):
 	# begin: auto-generated types
@@ -171,6 +179,9 @@ class EmailQueue(Document):
 	def is_to_be_sent(self):
 		return self.status in ["Not Sent", "Partially Sent"]
 
+	def is_externally_delivered(self):
+		return self.get(DELIVERY_OWNER_FIELD) == EXTERNAL_DELIVERY_OWNER
+
 	def can_send_now(self):
 		if (
 			frappe.are_emails_muted()
@@ -188,6 +199,10 @@ class EmailQueue(Document):
 		force_send: bool = False,
 	):
 		"""Send emails to recipients."""
+
+		# Before `force_send`: no path may send a row another backend owns.
+		if self.is_externally_delivered():
+			return
 
 		if not self.can_send_now() and not force_send:
 			return
@@ -476,9 +491,9 @@ class SendMailContext:
 				_file = frappe.get_doc("File", file_filters)
 				fcontent = _file.get_content()
 				attachment.update({"fname": _file.file_name, "fcontent": fcontent, "parent": message_obj})
-				attachment.pop("fid", None)
-				attachment.pop("file_url", None)
-				add_attachment(**attachment)
+				# Only what add_attachment takes: rows queued by another backend carry extra keys
+				# (e.g. the CRM's content_hash pin) that would otherwise raise TypeError.
+				add_attachment(**{key: attachment[key] for key in ADD_ATTACHMENT_KEYS if key in attachment})
 
 			elif attachment.get("print_format_attachment") == 1:
 				attachment.pop("print_format_attachment", None)
