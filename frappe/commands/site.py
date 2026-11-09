@@ -1412,11 +1412,17 @@ def trim_database(context: CliCtxObj, dry_run, format, no_backup, yes=False):
 			.run(pluck=True)
 		)
 		doctype_tables = frappe.get_all("DocType", pluck="name")
+		# Tables an app owns outside DocTypes (e.g. a separate service's schema) are never ghosts.
+		protected_tables = set(frappe.get_hooks("trim_database_ignore_tables"))
 
 		for table_name in database_tables:
 			if not table_name.startswith("tab"):
 				continue
-			if table_name.replace("tab", "", 1) not in doctype_tables and table_name not in STANDARD_TABLES:
+			if (
+				table_name.replace("tab", "", 1) not in doctype_tables
+				and table_name not in STANDARD_TABLES
+				and table_name not in protected_tables
+			):
 				TABLES_TO_DROP.append(table_name)
 
 		if not TABLES_TO_DROP:
