@@ -116,6 +116,9 @@ def enqueue(
 	# To handle older implementations
 	is_async = kwargs.pop("async", is_async)
 
+	if frappe.conf.get("run_background_jobs_inline") and not now:
+		return _run_inline(method, kwargs, after_commit=enqueue_after_commit)
+
 	if deduplicate:
 		if not job_id:
 			frappe.throw(_("`job_id` paramater is required for deduplication."))
@@ -207,6 +210,42 @@ def enqueue(
 		return
 
 	return enqueue_call()
+
+
+def _run_inline(method: str | Callable, kwargs: dict, after_commit: bool) -> Any:
+	"""`run_background_jobs_inline` (site/common config): no worker consumes the queues, so run
+	the job in this process. A job queued after commit runs after the commit and commits its own
+	writes; any other runs at once inside a savepoint. As with a worker, a failing job is logged
+	to Error Log and never fails the caller. RQ options (queue, timeout, job_id, callbacks) do
+	not apply."""
+	method_name = method if isinstance(method, str) else f"{method.__module__}.{method.__qualname__}"
+
+	def call():
+		return (frappe.get_attr(method) if isinstance(method, str) else method)(**kwargs)
+
+	def after_commit_job():
+		try:
+			call()
+			frappe.db.commit()
+		except Exception:
+			frappe.db.rollback()
+			frappe.log_error(title=method_name)
+			frappe.db.commit()
+
+	if after_commit:
+		frappe.db.after_commit.add(after_commit_job)
+		return None
+
+	savepoint = f"inline_job_{uuid4().hex[:12]}"
+	frappe.db.savepoint(savepoint)
+	try:
+		result = call()
+	except Exception:
+		frappe.db.rollback(save_point=savepoint)
+		frappe.log_error(title=method_name)
+		return None
+	frappe.db.release_savepoint(savepoint)
+	return result
 
 
 def enqueue_doc(doctype, name=None, method=None, queue="default", timeout=300, now=False, **kwargs):
